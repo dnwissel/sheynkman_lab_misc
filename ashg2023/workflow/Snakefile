@@ -1,0 +1,106 @@
+from snakemake.utils import min_version
+
+configfile: "config/config.yml"
+
+min_version(config["min_snakemake_version"])
+
+NDR_THRESHS = [0.025, 0.05, 0.1, 0.2]
+
+rule all:
+    input:    
+        expand("results/discovery_bambu_{NDR}/counts_gene_edger_day0_day5.tsv", NDR=NDR_THRESHS),
+        expand("results/discovery_bambu_{NDR}/counts_transcript_edger_day0_day5.tsv", NDR=NDR_THRESHS),
+        expand("results/discovery_bambu_{NDR}/counts_transcript_drimseq_day0_day5_gene_level_results.tsv", NDR=NDR_THRESHS),
+        expand("results/discovery_bambu_{NDR}/counts_transcript_drimseq_day0_day5_transcript_level_results.tsv", NDR=NDR_THRESHS),
+        expand("results/discovery_bambu_{NDR}/sqanti3_qc/{NDR}_SQANTI3_report.html", NDR=NDR_THRESHS)
+
+
+rule run_edger_day0_day5:
+    input:
+        quants="results/discovery_bambu_{ndr}/{sample}.txt"
+    output:
+        "results/discovery_bambu_{ndr}/{sample}_edger_day0_day5.tsv"
+    container:
+        f"docker://condaforge/mambaforge:{config['mambaforge_version']}"
+    conda:
+        "envs/edger.yml"
+    shell:
+        "Rscript workflow/scripts/edger_day0_day5.R --input_path {input.quants} --output_path {output}"
+
+rule run_drimseq_day0_day5:
+    input:
+        quants="results/discovery_bambu_{ndr}/counts_transcript.txt"
+    output:
+        "results/discovery_bambu_{ndr}/counts_transcript_drimseq_day0_day5_gene_level_results.tsv",
+        "results/discovery_bambu_{ndr}/counts_transcript_drimseq_day0_day5_transcript_level_results.tsv",
+    params:
+        path=lambda wc: f"results/discovery_bambu_{wc.get('ndr')}/counts_transcript_drimseq_day0_day5"
+    container:
+        f"docker://condaforge/mambaforge:{config['mambaforge_version']}"
+    conda:
+        "envs/drimseq.yml"
+    shell:
+        "Rscript workflow/scripts/drimseq_day0_day5.R --input_path {input.quants} --output_path {params.path}"
+
+
+rule filter_extended_annotation_sqanti:
+    input:
+        "results/discovery_bambu_{ndr}/extended_annotations.gtf",
+    output:
+        "results/discovery_bambu_{ndr}/extended_annotations_wtc11_only.gtf",
+    container:
+        f"docker://condaforge/mambaforge:{config['mambaforge_version']}"
+    shell:
+        """cat {input} | grep -v 'SIRV' | grep -v 'ERCC' > {output}"""
+
+rule filter_uncertain_strand_sqanti:
+    input:
+        "results/discovery_bambu_{ndr}/extended_annotations_wtc11_only.gtf",
+    output:
+        "results/discovery_bambu_{ndr}/extended_annotations_wtc11_only_filtered_strand.gtf",
+    container:
+        f"docker://condaforge/mambaforge:{config['mambaforge_version']}"
+    shell:
+        """awk '$7 != "."' {input} > {output}"""
+
+rule run_sqanti:
+    input:
+        query="results/discovery_bambu_{ndr}/extended_annotations_wtc11_only_filtered_strand.gtf",
+        reference="results/gencode.v38.annotation.gtf",
+        genome="results/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna"
+    output:
+        classification="results/discovery_bambu_{ndr}/sqanti3_qc/{ndr}_classification.txt",
+        junctions="results/discovery_bambu_{ndr}/sqanti3_qc/{ndr}_junctions.txt",
+    container:
+        f"docker://condaforge/mambaforge:{config['mambaforge_version']}"
+
+    params:
+        output_folder=lambda wc: f"results/discovery_bambu_{wc.get('ndr')}/sqanti3_qc"
+    threads: 4
+    conda:
+        "envs/proteogenomics.yml"
+    shell:
+        """python workflow/scripts/sqanti3_wrapper.py {input.query} {input.reference} {input.genome} \
+                --force_id_ignore \
+                --skipORF \
+                --polyA_motif_list results/mouse_and_human.polyA_motif.txt \
+                -o {wildcards.ndr} -d {params   .output_folder} \
+                --cpus {threads} --report both"""
+
+rule generate_sqanti_report:
+    input:
+        classification="results/discovery_bambu_{ndr}/sqanti3_qc/{ndr}_classification.txt",
+        junctions="results/discovery_bambu_{ndr}/sqanti3_qc/{ndr}_junctions.txt",
+    output:
+        "results/discovery_bambu_{ndr}/sqanti3_qc/{misc}_SQANTI3_report.html"
+    container:
+        f"docker://condaforge/mambaforge:{config['mambaforge_version']}"
+    threads: 1
+    conda:
+        "envs/proteogenomics.yml"
+    shell:
+        """Rscript workflow/scripts/SQANTI3_report.R \
+                {input.classification} \
+                {input.junctions} \
+                workflow/scripts/SQANTI3_report.Rmd
+        """

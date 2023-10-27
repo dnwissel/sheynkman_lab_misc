@@ -1,0 +1,12 @@
+name: drimseq
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - libgfortran
+  - tzdata
+  - bioconductor-drimseq=1.8.0
+  - r-vroom
+  - r-argparse
+  - r-dplyr

@@ -1,0 +1,11 @@
+name: edger
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - tzdata
+  - bioconductor-edger=3.42.4
+  - r-vroom
+  - r-argparse
+  - r-dplyr
